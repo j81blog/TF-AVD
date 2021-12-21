@@ -102,7 +102,7 @@ function New-SPFromApp {
     $servicePrincipal = Invoke-RestMethod -Uri $url -Method POST -Body $postBody -Headers $script:token
     return $servicePrincipal
 }
-
+<#
 function Add-SPDelegatedPermissions {
     param
     (
@@ -119,6 +119,8 @@ function Add-SPDelegatedPermissions {
     $spPermissions = Invoke-RestMethod -Uri $url -Method POST -Body $postBody -Headers $script:token
     return $spPermissions
 }
+#>
+
 function Consent-ApplicationPermissions {
     param
     (
@@ -133,6 +135,8 @@ function Consent-ApplicationPermissions {
         [string]$Scope
     )
     $date = Get-Date
+    $startTime = $date.ToUniversalTime().ToString("o")
+    $expiryTime = $date.AddYears(1).ToUniversalTime().ToString("o")
     $url = $($script:mainUrl) + "/oauth2PermissionGrants"
     $body = @{
         clientId    = $ServicePrincipalId
@@ -140,14 +144,15 @@ function Consent-ApplicationPermissions {
         principalId = $null
         resourceId  = $ResourceId
         scope       = $Scope
-        startTime   = $date
-        expiryTime  = $date
+        startTime   = $startTime
+        expiryTime  = $expiryTime
     }
     $postBody = $body | ConvertTo-Json
-    $appPermissions = Invoke-RestMethod -Uri $url -Method POST -Body $postBody -Headers $script:token
+    $appPermissions = Invoke-RestMethod -Uri $url -Method POST -Body $postBody -Headers $script:token  -ContentType "application/json"
     return $appPermissions
 }
 
+<#
 function Assign-AppRole {
     param
     (
@@ -168,7 +173,7 @@ function Assign-AppRole {
     $roles = Invoke-RestMethod -Uri $url -Method POST -Headers $script:token -Body $($body | ConvertTo-Json)
     return $roles
 }
-
+#>
 $permissions = @{
     resourceAppId  = "00000003-0000-0000-c000-000000000000"
     resourceAccess = @(
@@ -179,7 +184,7 @@ $permissions = @{
     )
 }
 
-Connect-AzAccount
+#Connect-AzAccount
 
 $script:AzureUrl = "https://management.azure.com/"
 $script:azureToken = GetAuthToken -resource $script:AzureUrl
@@ -187,13 +192,14 @@ $script:azureToken = GetAuthToken -resource $script:AzureUrl
 $script:mainUrl = "https://graph.microsoft.com/beta"
 $script:token = GetAuthToken -resource 'https://graph.microsoft.com'
 $script:context = [Microsoft.Azure.Commands.Common.Authentication.Abstractions.AzureRmProfileProvider]::Instance.Profile.DefaultContext
-$AppDisplayName = "UK-UG-TerraForm"
+$AppDisplayName = "UG-TerraForm"
 $newApp = New-Application -AppDisplayName $AppDisplayName
 Add-ApplicationPermissions -AppId $newApp.Id -permissions $permissions 
 $appPass = New-ApplicationPassword -AppId $newApp.id
 $newSp = New-SPFromApp -AppId $newApp.AppId 
 # ResourceID 3f73b7e5-80b4-4ca8-9a77-8811bb27eb70 is the GraphAggregatorService enterprise application objectId in 
-Consent-ApplicationPermissions -ServicePrincipalId $newSp.id -ResourceId "3f73b7e5-80b4-4ca8-9a77-8811bb27eb70" -Scope "Group.Read.All"
+$azureGraphObjectID = (Get-AzureADServicePrincipal -Filter "AppID eq '00000003-0000-0000-c000-000000000000'").ObjectId
+Consent-ApplicationPermissions -ServicePrincipalId $newSp.id -ResourceId $azureGraphObjectID -Scope "Group.Read.All"
 
 
 # Create contributor-plus role at subscription level
@@ -208,13 +214,13 @@ $newRoleUrl = $script:AzureUrl + "subscriptions/" + $script:context.Subscription
 $newRoleBody = @{
     name = $newRoleguid
     properties = @{
-        roleName = "Contributor Plus UK Demo"
+        roleName = "Contributor Plus"
         description = "Contributor WITH assign permissions"
         type = "CustomRole"
         permissions = @(
             @{
                 actions = @("*")
-                notActions = $currentPerissions.Remove("Microsoft.Authorization/*/Write")
+                notActions = $($currentPerissions | Where-Object {$_ -ne "Microsoft.Authorization/*/Write"})
             }
         )
         assignableScopes = @(
@@ -222,7 +228,8 @@ $newRoleBody = @{
         )
     }
 }
-Invoke-RestMethod -Uri $newRoleUrl -Method PUT -body $($newRoleBody | ConvertTo-Json -Depth 4) -headers $script:azureToken
+$result = Invoke-RestMethod -Uri $newRoleUrl -Method PUT -body $($newRoleBody | ConvertTo-Json -Depth 4) -headers $script:azureToken
+$result.properties | Out-String
 
 $assignGuid = (new-guid).guid
 $roleDefinitionId = "/subscriptions/" + $script:context.Subscription.Id + "/providers/Microsoft.Authorization/roleDefinitions/"+ $newRoleguid
@@ -234,10 +241,13 @@ $body = @{
     }
 }
 $jsonBody = $body | ConvertTo-Json -Depth 6
-Invoke-RestMethod -Uri $url -Method PUT -Body $jsonBody -headers $script:azureToken
+$result = Invoke-RestMethod -Uri $url -Method PUT -Body $jsonBody -headers $script:azureToken
+$result.properties | Out-String
 
 # Terraform environment variables are:
-Write-Host "ARM_TENANT_ID: "$script:context.Tenant.Id
-Write-Host "ARM_SUBSCRIPTION_ID: "$script:context.Subscription.Id
-Write-Host "ARM_CLIENT_ID: "$newApp.appid
-Write-Host "ARM_CLIENT_SECRET: "$appPass.secretText
+Write-Host @"
+ARM_TENANT_ID : $($script:context.Tenant.Id)
+ARM_SUBSCRIPTION_ID : $($script:context.Subscription.Id)
+ARM_CLIENT_ID : $($newApp.appid)
+ARM_CLIENT_SECRET : $($appPass.secretText)
+"@
