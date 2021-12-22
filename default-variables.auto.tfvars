@@ -45,7 +45,7 @@ avd_workspace_friendly_name = "J81-Workspace"
 avd_workspace_description = "Work from home"
 
 ## Assign to group
-aad_group_name = "All Users"
+aad_group_name = "AVD-Users"
 
 ## Sessionhosts AzureAD
 avd_sessionhost_count = 2
